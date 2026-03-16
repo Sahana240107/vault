@@ -1,280 +1,179 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import Sidebar from '../components/Sidebar';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 
 const Dashboard = () => {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
-  const [vaults, setVaults] = useState([]);
   const [products, setProducts] = useState([]);
-  const [activeVault, setActiveVault] = useState(null);
-  const [showAddProduct, setShowAddProduct] = useState(false);
-  const [showCreateVault, setShowCreateVault] = useState(false);
-  const [vaultName, setVaultName] = useState('');
-  const [form, setForm] = useState({ name:'', brand:'', category:'Electronics', purchasePrice:'', warrantyExpiry:'' });
-  const [error, setError] = useState('');
+  const [vault, setVault] = useState(null);
 
-  useEffect(() => { fetchVaults(); }, []);
-  useEffect(() => { if (activeVault) fetchProducts(); }, [activeVault]);
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const vaults = await api('/vaults/my');
+        if (vaults.length > 0) {
+          setVault(vaults[0]);
+          const prods = await api(`/products?vaultId=${vaults[0]._id}`);
+          setProducts(prods);
+        }
+      } catch (err) { console.error(err); }
+    };
+    load();
+  }, []);
 
-  const fetchVaults = async () => {
-    try {
-      const data = await api('/vaults/my');
-      setVaults(data);
-      if (data.length > 0) setActiveVault(data[0]);
-    } catch (err) { console.error(err); }
-  };
+  const now = new Date();
+  const activeWarranties = products.filter(p => p.warrantyExpiry && new Date(p.warrantyExpiry) > now);
+  const expiringThisMonth = products.filter(p => {
+    if (!p.warrantyExpiry) return false;
+    const exp = new Date(p.warrantyExpiry);
+    return exp > now && (exp - now) < 30 * 24 * 60 * 60 * 1000;
+  });
 
-  const fetchProducts = async () => {
-    try {
-      const data = await api(`/products?vaultId=${activeVault._id}`);
-      setProducts(Array.isArray(data) ? data : []);
-    } catch (err) { console.error(err); }
-  };
+  const getCategoryEmoji = (cat) => ({ Electronics:'📺', Appliance:'🧊', Vehicle:'🚗', Furniture:'🛋️' }[cat] || '📦');
 
-  const handleCreateVault = async (e) => {
-    e.preventDefault();
-    try {
-      await api('/vaults', 'POST', { name: vaultName });
-      setVaultName(''); setShowCreateVault(false);
-      fetchVaults();
-    } catch (err) { setError(err.message); }
-  };
-
-  const handleAddProduct = async (e) => {
-    e.preventDefault();
-    try {
-      await api('/products', 'POST', { ...form, vaultId: activeVault._id });
-      setForm({ name:'', brand:'', category:'Electronics', purchasePrice:'', warrantyExpiry:'' });
-      setShowAddProduct(false);
-      fetchProducts();
-    } catch (err) { setError(err.message); }
-  };
-
-  const handleDeleteProduct = async (id) => {
-    if (!confirm('Delete this product?')) return;
-    try {
-      await api(`/products/${id}`, 'DELETE');
-      fetchProducts();
-    } catch (err) { setError(err.message); }
-  };
-
-  const getWarrantyChip = (expiry) => {
-    if (!expiry) return <span className="chip warn">No warranty</span>;
-    const days = Math.ceil((new Date(expiry) - new Date()) / (1000*60*60*24));
-    if (days < 0)  return <span className="chip danger">Expired</span>;
-    if (days < 30) return <span className="chip warn">Expiring soon</span>;
+  const getWarrantyChip = (exp) => {
+    if (!exp) return null;
+    const days = Math.floor((new Date(exp) - now) / (1000*60*60*24));
+    if (days < 0) return <span className="chip danger">Expired</span>;
+    if (days <= 7) return <span className="chip danger">{days}d left</span>;
+    if (days <= 30) return <span className="chip warn">{days}d left</span>;
     return <span className="chip green">Active</span>;
   };
 
-  const initials = user?.name?.split(' ').map(n => n[0]).join('').toUpperCase() || 'U';
-  const expiringSoon = products.filter(p => {
-    if (!p.warrantyExpiry) return false;
-    const days = Math.ceil((new Date(p.warrantyExpiry) - new Date()) / (1000*60*60*24));
-    return days >= 0 && days <= 30;
-  });
+  const firstName = user?.name?.split(' ')[0] || 'there';
+  const today = new Date().toLocaleDateString('en-US', { weekday:'long', day:'numeric', month:'short', year:'numeric' });
 
   return (
     <div className="app-shell">
-      {/* SIDEBAR */}
-      <aside className="sidebar">
-        <div className="sidebar-logo">
-          Vault<span className="gold">MERN</span>
-          <small>DIGITAL VAULT</small>
-        </div>
-        <div className="nav-section">Main</div>
-        <a className="nav-item active"><span className="nav-icon">⊞</span> Dashboard</a>
-        <a className="nav-item" onClick={() => navigate('/products')}><span className="nav-icon">◈</span> Products</a>
-        <a className="nav-item"><span className="nav-icon">◎</span> Vault</a>
-        <a className="nav-item"><span className="nav-icon">◉</span> Analytics</a>
-        <div className="nav-section">Account</div>
-        <a className="nav-item"><span className="nav-icon">⊙</span> Notifications</a>
-        <a className="nav-item" onClick={() => { logout(); navigate('/login'); }}>
-          <span className="nav-icon">→</span> Logout
-        </a>
-        <div className="sidebar-footer">
-          <div className="user-pill">
-            <div className="avatar">{initials}</div>
-            <div>
-              <div style={{fontSize:'13px', fontWeight:500}}>{user?.name}</div>
-              <div style={{fontSize:'11px', color:'var(--text-muted)'}}>{activeVault?.role || 'owner'}</div>
-            </div>
-          </div>
-        </div>
-      </aside>
-
-      {/* MAIN */}
+      <Sidebar />
       <main className="main-content">
-        {/* TOPBAR */}
-        <div className="topbar">
-          <select style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'8px',padding:'8px 12px',color:'var(--text-primary)',fontSize:'13px',outline:'none',cursor:'pointer'}}
-            value={activeVault?._id || ''} onChange={e => setActiveVault(vaults.find(v => v._id === e.target.value))}>
-            {vaults.map(v => <option key={v._id} value={v._id}>{v.name}</option>)}
-          </select>
-          <input className="topbar-search" placeholder="Search products..." />
-          <div style={{marginLeft:'auto', display:'flex', gap:'8px'}}>
-            <button className="btn-ghost" style={{padding:'8px 14px',fontSize:'12px'}} onClick={() => setShowCreateVault(true)}>+ New Vault</button>
+        <div className="page-header">
+          <div>
+            <p style={{ fontSize:13,color:'var(--text-muted)' }}>{today}</p>
+            <h1>Good morning, {firstName} 👋</h1>
+            <p>{expiringThisMonth.length} warranties expiring this month.</p>
+          </div>
+          <div style={{ display:'flex',gap:10,flexWrap:'wrap',alignItems:'center' }}>
+            <div className="live-dot">Live Sync</div>
+            <button className="btn-primary" onClick={() => navigate('/scan')}>+ Scan Bill</button>
           </div>
         </div>
 
-        <div className="page-body fade-in">
-          {/* STAT CARDS */}
-          <div className="grid-4" style={{marginBottom:'28px'}}>
-            <div className="stat-card">
-              <div className="stat-label">Total Products</div>
-              <div className="stat-value gold">{products.length}</div>
-              <div className="stat-sub">in this vault</div>
+        {/* STAT CARDS */}
+        <div className="grid-4" style={{ marginBottom:24 }}>
+          <div className="stat-card gold-accent">
+            <div className="stat-icon">📦</div>
+            <div className="stat-label">TOTAL PRODUCTS</div>
+            <div className="stat-value">{products.length}</div>
+            <div className="stat-sub">in your vault</div>
+          </div>
+          <div className="stat-card cyan-accent">
+            <div className="stat-icon">📋</div>
+            <div className="stat-label">ACTIVE WARRANTIES</div>
+            <div className="stat-value">{activeWarranties.length}</div>
+            <div className="stat-sub">{expiringThisMonth.length} expiring soon</div>
+          </div>
+          <div className="stat-card violet-accent">
+            <div className="stat-icon">💰</div>
+            <div className="stat-label">TOTAL VALUE</div>
+            <div className="stat-value">₹{(products.reduce((s,p) => s + (p.purchasePrice||0), 0)/1000).toFixed(0)}K</div>
+            <div className="stat-sub">across all products</div>
+          </div>
+          <div className="stat-card green-accent">
+            <div className="stat-icon">🏆</div>
+            <div className="stat-label">VAULT HEALTH</div>
+            <div className="stat-value">{vault?.healthScore || 0}</div>
+            <div className="stat-sub">keep adding data</div>
+          </div>
+        </div>
+
+        {/* MIDDLE ROW */}
+        <div className="grid-2" style={{ marginBottom:24 }}>
+          {/* WARRANTY TRACKER */}
+          <div className="card-glint">
+            <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16 }}>
+              <div>
+                <p className="label">WARRANTY TRACKER</p>
+                <h3 style={{ fontFamily:'Syne,sans-serif',fontSize:15,fontWeight:700,marginTop:4 }}>Expiring Soon</h3>
+              </div>
+              <span className="chip warn">⚠ {expiringThisMonth.length} Critical</span>
             </div>
-            <div className="stat-card">
-              <div className="stat-label">Active Warranties</div>
-              <div className="stat-value cyan">{products.filter(p => p.warrantyExpiry && new Date(p.warrantyExpiry) > new Date()).length}</div>
-              <div className="stat-sub">still covered</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Expiring Soon</div>
-              <div className="stat-value" style={{color:'var(--warn)'}}>{expiringSoon.length}</div>
-              <div className="stat-sub">within 30 days</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Vault Health</div>
-              <div className="stat-value violet">{activeVault?.healthScore ?? 0}%</div>
-              <div className="stat-sub">documentation score</div>
-            </div>
+            {expiringThisMonth.length === 0 ? (
+              <p style={{ fontSize:13,color:'var(--text-muted)',textAlign:'center',padding:'20px 0' }}>🎉 No warranties expiring soon</p>
+            ) : (
+              <table className="data-table" style={{ fontSize:12 }}>
+                <thead><tr><th>PRODUCT</th><th>EXPIRES</th><th>STATUS</th></tr></thead>
+                <tbody>
+                  {expiringThisMonth.map(p => (
+                    <tr key={p._id}>
+                      <td>{p.name}</td>
+                      <td>{new Date(p.warrantyExpiry).toLocaleDateString()}</td>
+                      <td>{getWarrantyChip(p.warrantyExpiry)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
 
-          {/* EXPIRING SOON STRIP */}
-          {expiringSoon.length > 0 && (
-            <div style={{marginBottom:'28px'}}>
-              <div className="label" style={{marginBottom:'12px'}}>⚠ Expiring Soon</div>
-              <div style={{display:'flex', gap:'12px', overflowX:'auto', paddingBottom:'4px'}}>
-                {expiringSoon.map(p => (
-                  <div key={p._id} className="card" style={{minWidth:'180px', flexShrink:0}}>
-                    <div style={{fontSize:'13px',fontWeight:600,fontFamily:'Syne,sans-serif'}}>{p.name}</div>
-                    <div style={{fontSize:'11px',color:'var(--text-muted)',marginBottom:'8px'}}>{p.brand}</div>
-                    <span className="chip warn" style={{fontSize:'10px'}}>
-                      {Math.ceil((new Date(p.warrantyExpiry) - new Date()) / (1000*60*60*24))}d left
-                    </span>
-                  </div>
-                ))}
+          {/* ALERTS */}
+          <div className="card-glint">
+            <div style={{ marginBottom:16 }}>
+              <p className="label">GEO-AWARE ALERTS</p>
+              <h3 style={{ fontFamily:'Syne,sans-serif',fontSize:15,fontWeight:700,marginTop:4 }}>Recent Notifications</h3>
+            </div>
+            <div className="alert-card geo">
+              <span style={{ fontSize:18 }}>📍</span>
+              <div>
+                <div style={{ fontSize:12,fontWeight:600,marginBottom:2 }}>Samsung Service Center Nearby</div>
+                <div style={{ fontSize:11,color:'var(--text-muted)' }}>0.8km away · TV warranty expires in 7 days</div>
               </div>
             </div>
-          )}
+            <div className="alert-card warn">
+              <span style={{ fontSize:18 }}>⏰</span>
+              <div>
+                <div style={{ fontSize:12,fontWeight:600,marginBottom:2 }}>Warranty Expiry Reminder</div>
+                <div style={{ fontSize:11,color:'var(--text-muted)' }}>Check your expiring products</div>
+              </div>
+            </div>
+            <div className="alert-card info">
+              <span style={{ fontSize:18 }}>🤖</span>
+              <div>
+                <div style={{ fontSize:12,fontWeight:600,marginBottom:2 }}>AI Scanner Ready</div>
+                <div style={{ fontSize:11,color:'var(--text-muted)' }}>Upload a bill to auto-fill product details</div>
+              </div>
+            </div>
+          </div>
+        </div>
 
-          {/* PRODUCTS */}
-          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'16px'}}>
+        {/* RECENT PRODUCTS */}
+        <div className="card-glint">
+          <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16 }}>
             <div>
-              <div className="label">Products</div>
-              <h2 style={{fontFamily:'Syne,sans-serif',fontWeight:800,fontSize:'18px',marginTop:'4px'}}>
-                {activeVault ? activeVault.name : 'Select a vault'}
-              </h2>
+              <p className="label">RECENTLY ADDED</p>
+              <h3 style={{ fontFamily:'Syne,sans-serif',fontSize:15,fontWeight:700,marginTop:4 }}>Products</h3>
+            </div>
+            <button className="btn-ghost" style={{ fontSize:12,padding:'8px 14px' }} onClick={() => navigate('/products')}>View All →</button>
+          </div>
+          <div className="grid-4">
+            {products.slice(0,3).map(p => (
+              <div key={p._id} className="product-card" onClick={() => navigate('/products')}>
+                <span style={{ fontSize:32,marginBottom:10,display:'block' }}>{getCategoryEmoji(p.category)}</span>
+                <div style={{ fontWeight:600,fontSize:14,marginBottom:4 }}>{p.name}</div>
+                <div style={{ fontSize:11,color:'var(--text-muted)',marginBottom:10 }}>{p.brand} · {p.category}</div>
+                {getWarrantyChip(p.warrantyExpiry)}
+              </div>
+            ))}
+            <div className="product-card" style={{ borderStyle:'dashed',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',cursor:'pointer' }} onClick={() => navigate('/scan')}>
+              <span style={{ fontSize:28 }}>➕</span>
+              <div style={{ fontSize:12,color:'var(--text-muted)',marginTop:8 }}>Add Product</div>
             </div>
           </div>
-
-          {products.length === 0 ? (
-            <div style={{textAlign:'center', padding:'60px 20px', color:'var(--text-muted)'}}>
-              <div style={{fontSize:'48px', marginBottom:'16px'}}>◈</div>
-              <div style={{fontFamily:'Syne,sans-serif',fontWeight:700,fontSize:'18px',color:'var(--text-secondary)',marginBottom:'8px'}}>No products yet</div>
-              <div style={{fontSize:'14px', marginBottom:'24px'}}>Add your first product to this vault</div>
-              <button className="btn-primary" onClick={() => setShowAddProduct(true)}>+ Add Product</button>
-            </div>
-          ) : (
-            <div className="grid-3">
-              {products.map(p => (
-                <div key={p._id} className="product-card">
-                  <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:'12px'}}>
-                    <div style={{width:40,height:40,borderRadius:10,background:'var(--gold-dim)',border:'1px solid rgba(232,184,75,0.2)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'18px'}}>
-                      {p.category === 'Electronics' ? '📱' : p.category === 'Appliance' ? '🏠' : p.category === 'Vehicle' ? '🚗' : '📦'}
-                    </div>
-                    <button onClick={() => handleDeleteProduct(p._id)}
-                      style={{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'16px',padding:'2px 6px'}}
-                      title="Delete">✕</button>
-                  </div>
-                  <div className="product-name">{p.name}</div>
-                  <div className="product-brand">{p.brand || 'Unknown brand'}</div>
-                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                    {getWarrantyChip(p.warrantyExpiry)}
-                    {p.purchasePrice && <span style={{fontSize:'12px',color:'var(--text-muted)'}}>₹{p.purchasePrice.toLocaleString()}</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
-
-        {/* FAB */}
-        {activeVault && <button className="fab" onClick={() => setShowAddProduct(true)}>+</button>}
       </main>
-
-      {/* ADD PRODUCT MODAL */}
-      {showAddProduct && (
-        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowAddProduct(false)}>
-          <div className="modal fade-in">
-            <div className="modal-title">Add Product</div>
-            {error && <div className="error-msg">{error}</div>}
-            <form onSubmit={handleAddProduct}>
-              <div className="form-group">
-                <label className="form-label">Product Name *</label>
-                <input className="form-input" placeholder="e.g. Samsung Galaxy S24" required
-                  value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
-              </div>
-              <div className="grid-2">
-                <div className="form-group">
-                  <label className="form-label">Brand</label>
-                  <input className="form-input" placeholder="Samsung"
-                    value={form.brand} onChange={e => setForm({...form, brand: e.target.value})} />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Category *</label>
-                  <select className="form-input" value={form.category} onChange={e => setForm({...form, category: e.target.value})}>
-                    <option>Electronics</option>
-                    <option>Appliance</option>
-                    <option>Vehicle</option>
-                    <option>Furniture</option>
-                    <option>Other</option>
-                  </select>
-                </div>
-              </div>
-              <div className="grid-2">
-                <div className="form-group">
-                  <label className="form-label">Purchase Price (₹)</label>
-                  <input className="form-input" type="number" placeholder="45000"
-                    value={form.purchasePrice} onChange={e => setForm({...form, purchasePrice: e.target.value})} />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Warranty Expiry</label>
-                  <input className="form-input" type="date"
-                    value={form.warrantyExpiry} onChange={e => setForm({...form, warrantyExpiry: e.target.value})} />
-                </div>
-              </div>
-              <div style={{display:'flex', gap:'12px', marginTop:'8px'}}>
-                <button type="button" className="btn-ghost" style={{flex:1}} onClick={() => setShowAddProduct(false)}>Cancel</button>
-                <button type="submit" className="btn-primary" style={{flex:1, justifyContent:'center'}}>Save to Vault →</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* CREATE VAULT MODAL */}
-      {showCreateVault && (
-        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowCreateVault(false)}>
-          <div className="modal fade-in">
-            <div className="modal-title">Create New Vault</div>
-            <form onSubmit={handleCreateVault}>
-              <div className="form-group">
-                <label className="form-label">Vault Name *</label>
-                <input className="form-input" placeholder="e.g. Family Vault" required
-                  value={vaultName} onChange={e => setVaultName(e.target.value)} />
-              </div>
-              <div style={{display:'flex', gap:'12px', marginTop:'8px'}}>
-                <button type="button" className="btn-ghost" style={{flex:1}} onClick={() => setShowCreateVault(false)}>Cancel</button>
-                <button type="submit" className="btn-primary" style={{flex:1, justifyContent:'center'}}>Create Vault →</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
