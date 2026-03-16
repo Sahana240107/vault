@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 const Landing = () => {
   const navigate = useNavigate();
 
+  const playfair = { fontFamily: 'Playfair Display, serif' };
+
   return (
     <div style={{ background: 'var(--void)', minHeight: '100vh' }}>
       <div className="glow-orb" style={{ width:600,height:600,top:-200,left:-100,background:'rgba(232,184,75,1)' }}></div>
@@ -17,7 +19,7 @@ const Landing = () => {
         <p style={{ fontSize:11,letterSpacing:4,color:'var(--gold)',fontFamily:'Syne,sans-serif',fontWeight:600,marginBottom:20,position:'relative',zIndex:1 }}>
           DIGITAL PRODUCT OWNERSHIP VAULT
         </p>
-        <h1 style={{ fontFamily:'Syne,sans-serif',fontSize:'clamp(42px,8vw,88px)',fontWeight:800,lineHeight:0.95,letterSpacing:-3,marginBottom:24,position:'relative',zIndex:1 }}>
+        <h1 style={{ ...playfair, fontSize:'clamp(42px,8vw,88px)', fontWeight:900, lineHeight:1.0, letterSpacing:-2, marginBottom:24, position:'relative', zIndex:1 }}>
           Every Product<br />
           <span style={{ color:'var(--gold)' }}>You Own. Secured.</span>
         </h1>
@@ -43,8 +45,8 @@ const Landing = () => {
       <section style={{ padding:'80px 48px' }}>
         <div style={{ textAlign:'center' }}>
           <p className="label">WHY VAULTMERN</p>
-          <h2 className="section-title" style={{ marginTop:10 }}>
-            Built for the way<br />you actually <span className="gold">own things.</span>
+          <h2 style={{ ...playfair, fontSize:'clamp(28px,4vw,52px)', fontWeight:800, lineHeight:1.05, letterSpacing:-1, marginTop:10 }}>
+            Built for the way<br />you actually <span style={{ color:'var(--gold)' }}>own things.</span>
           </h2>
         </div>
         <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:16,marginTop:48 }}>
@@ -56,7 +58,7 @@ const Landing = () => {
           ].map((f, i) => (
             <div key={i} className="feature-card">
               <span style={{ fontSize:32,marginBottom:14,display:'block' }}>{f.icon}</span>
-              <h3 style={{ fontFamily:'Syne,sans-serif',fontSize:16,fontWeight:700,marginBottom:8 }}>{f.title}</h3>
+              <h3 style={{ ...playfair, fontSize:18, fontWeight:700, marginBottom:8 }}>{f.title}</h3>
               <p style={{ fontSize:13,color:'var(--text-muted)',lineHeight:1.6 }}>{f.desc}</p>
             </div>
           ))}
@@ -67,8 +69,8 @@ const Landing = () => {
       <section style={{ padding:'60px 48px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:48,alignItems:'center' }} id="auth-section">
         <div>
           <p className="label">START FOR FREE</p>
-          <h2 className="section-title" style={{ marginTop:10,marginBottom:16 }}>
-            Your vault<br />awaits <span className="gold">you.</span>
+          <h2 style={{ ...playfair, fontSize:'clamp(28px,4vw,48px)', fontWeight:800, lineHeight:1.05, letterSpacing:-1, marginTop:10, marginBottom:16 }}>
+            Your vault<br />awaits <span style={{ color:'var(--gold)' }}>you.</span>
           </h2>
           <p style={{ fontSize:14,color:'var(--text-muted)',lineHeight:1.7,maxWidth:360 }}>
             Join thousands of households securing their product ownership.
@@ -80,7 +82,7 @@ const Landing = () => {
           </div>
         </div>
         <div className="auth-form-card">
-          <h3 style={{ fontFamily:'Syne,sans-serif',fontSize:22,fontWeight:800,marginBottom:6 }}>Create Your Vault</h3>
+          <h3 style={{ ...playfair, fontSize:24, fontWeight:800, marginBottom:6 }}>Create Your Vault</h3>
           <p style={{ fontSize:13,color:'var(--text-muted)',marginBottom:28 }}>Sign up and start protecting your products in minutes.</p>
           <button className="btn-primary" style={{ width:'100%',justifyContent:'center',marginBottom:16 }} onClick={() => navigate('/register')}>
             ⚡ Create Account
