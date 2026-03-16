@@ -1,11 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const protect = require('../middleware/auth.middleware');
-const { register, login } = require('../controllers/auth.controller');
+const { register, login, updateMe, refreshToken } = require('../controllers/auth.controller');
 
 router.post('/register', register);
 router.post('/login', login);
-router.get('/me', protect, (req, res) => {             // add at the bottom
-  res.json(req.user);
-});
+router.post('/refresh', refreshToken);
+router.get('/me', protect, (req, res) => res.json(req.user));
+router.put('/me', protect, updateMe);
+
 module.exports = router;

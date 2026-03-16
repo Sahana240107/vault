@@ -45,3 +45,31 @@ exports.inviteMember = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+// PUT /api/vaults/:id/member/:uid — change role
+exports.changeMemberRole = async (req, res) => {
+  try {
+    const { role } = req.body;
+    const membership = await VaultMember.findOneAndUpdate(
+      { vaultId: req.params.id, userId: req.params.uid },
+      { role },
+      { new: true }
+    );
+    if (!membership) return res.status(404).json({ message: 'Member not found' });
+    res.json(membership);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// DELETE /api/vaults/:id/member/:uid — remove member
+exports.removeMember = async (req, res) => {
+  try {
+    await VaultMember.findOneAndDelete({
+      vaultId: req.params.id,
+      userId: req.params.uid
+    });
+    res.json({ message: 'Member removed' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
