@@ -1,74 +1,109 @@
-import Sidebar from '../components/Sidebar';
-import { useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { api } from '../services/api';
+import { useNavigate } from 'react-router-dom';
+import Sidebar from '../components/Sidebar';
 import ProductDetailDrawer from '../components/ProductDetailDrawer';
 import EditProductModal from '../components/EditProductModal';
+import AddProductModal from '../components/AddProductModal';
+import GeoAlertBanner from '../components/GeoAlertBanner';
+import WarrantyChip from '../components/WarrantyChip';
+import { api } from '../services/api';
+import { useVault } from '../context/VaultContext';
+
+const CATEGORIES = ['All', 'Electronics', 'Appliance', 'Vehicle', 'Furniture', 'Other'];
+const CAT_EMOJI  = { Electronics:'📺', Appliance:'🧊', Vehicle:'🚗', Furniture:'🛋️', Other:'📦' };
 
 const Products = () => {
   const navigate = useNavigate();
-  const [products, setProducts] = useState([]);
-  const [vaultId, setVaultId] = useState(null);
-  const [search, setSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('All');
-  const [statusFilter, setStatusFilter] = useState('All');
-  const [sortBy, setSortBy] = useState('newest');
-  const [selectedProduct, setSelectedProduct] = useState(null);
-  const [editingProduct, setEditingProduct] = useState(null);
+  const { vaults, activeVault, switchVault } = useVault();
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const vaults = await api('/vaults/my');
-        if (vaults.length > 0) {
-          setVaultId(vaults[0]._id);
-          const prods = await api(`/products?vaultId=${vaults[0]._id}`);
-          setProducts(prods);
-        }
-      } catch (err) { console.error(err); }
-    };
-    load();
-  }, []);
+  const [products, setProducts] = useState([]);
+  const [brands,   setBrands]   = useState([]);
+  const [loading,  setLoading]  = useState(false);
+
+  // Filters
+  const [search,         setSearch]         = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('All');
+  const [brandFilter,    setBrandFilter]    = useState('All');
+  const [statusFilter,   setStatusFilter]   = useState('All');
+  const [sortBy,         setSortBy]         = useState('newest');
+  const [viewMode,       setViewMode]       = useState('grid');
+
+  // Modals
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [editingProduct,  setEditingProduct]  = useState(null);
+  const [showAddModal,    setShowAddModal]    = useState(false);
+
+
+
+// Safety fallback — if context vault not ready, load from API directly
+useEffect(() => {
+  if (activeVault?._id || vaults.length === 0) return;
+  // context hasn't hydrated yet, wait 500ms and try again
+  const t = setTimeout(() => {
+    if (!activeVault?._id && vaults.length > 0) {
+      loadProducts(vaults[0]._id);
+    }
+  }, 500);
+  return () => clearTimeout(t);
+}, [vaults]);
+
+ const loadProducts = async (vaultId) => {
+  try {
+    setLoading(true);
+    // Fetch products and brands separately so one failure doesn't kill both
+    const prods = await api(`/products?vaultId=${vaultId}`);
+    setProducts(prods);
+    try {
+      const brandList = await api(`/products/brands?vaultId=${vaultId}`);
+      setBrands(brandList);
+    } catch {
+      // brands endpoint failed — extract brands from products client-side as fallback
+      const b = [...new Set(prods.map(p => p.brand).filter(Boolean))].sort();
+      setBrands(b);
+    }
+  } catch (err) {
+    console.error(err);
+  } finally {
+    setLoading(false);
+  }
+};
+
+useEffect(() => {
+  if (!activeVault?._id) return;
+  loadProducts(activeVault._id);
+}, [activeVault?._id]);
 
   const now = new Date();
 
   const getWarrantyStatus = (exp) => {
     if (!exp) return 'none';
-    const days = Math.floor((new Date(exp) - now) / (1000 * 60 * 60 * 24));
-    if (days < 0) return 'expired';
-    if (days <= 30) return 'expiring';
+    const d = Math.floor((new Date(exp) - now) / 86400000);
+    if (d < 0)   return 'expired';
+    if (d <= 30) return 'expiring';
     return 'active';
   };
-
-  const getWarrantyChip = (exp) => {
-    const s = getWarrantyStatus(exp);
-    if (s === 'none') return <span className="chip" style={{ background: 'var(--deep)', borderColor: 'var(--border)', color: 'var(--text-muted)' }}>No warranty</span>;
-    if (s === 'expired') return <span className="chip danger">Expired</span>;
-    if (s === 'expiring') return <span className="chip warn">Expiring Soon</span>;
-    return <span className="chip green">Active</span>;
-  };
-
-  const getCategoryEmoji = (cat) => ({ Electronics: '📺', Appliance: '🧊', Vehicle: '🚗', Furniture: '🛋️' }[cat] || '📦');
 
   const filtered = products
     .filter(p => {
       const q = search.toLowerCase();
       if (q && !p.name?.toLowerCase().includes(q) && !p.brand?.toLowerCase().includes(q) && !p.notes?.toLowerCase().includes(q)) return false;
       if (categoryFilter !== 'All' && p.category !== categoryFilter) return false;
+      if (brandFilter !== 'All' && p.brand?.toLowerCase() !== brandFilter.toLowerCase()) return false;
       if (statusFilter !== 'All') {
         const s = getWarrantyStatus(p.warrantyExpiry);
-        if (statusFilter === 'Active' && s !== 'active') return false;
+        if (statusFilter === 'Active'   && s !== 'active')   return false;
         if (statusFilter === 'Expiring' && s !== 'expiring') return false;
-        if (statusFilter === 'Expired' && s !== 'expired') return false;
+        if (statusFilter === 'Expired'  && s !== 'expired')  return false;
       }
       return true;
     })
     .sort((a, b) => {
-      if (sortBy === 'newest') return new Date(b.createdAt) - new Date(a.createdAt);
-      if (sortBy === 'oldest') return new Date(a.createdAt) - new Date(b.createdAt);
+      if (sortBy === 'newest')     return new Date(b.createdAt) - new Date(a.createdAt);
+      if (sortBy === 'oldest')     return new Date(a.createdAt) - new Date(b.createdAt);
       if (sortBy === 'price-high') return (b.purchasePrice || 0) - (a.purchasePrice || 0);
-      if (sortBy === 'price-low') return (a.purchasePrice || 0) - (b.purchasePrice || 0);
-      if (sortBy === 'name') return (a.name || '').localeCompare(b.name || '');
+      if (sortBy === 'price-low')  return (a.purchasePrice || 0) - (b.purchasePrice || 0);
+      if (sortBy === 'name')       return (a.name || '').localeCompare(b.name || '');
+      if (sortBy === 'warranty')   return new Date(a.warrantyExpiry || '9999') - new Date(b.warrantyExpiry || '9999');
       return 0;
     });
 
@@ -78,9 +113,7 @@ const Products = () => {
       await api(`/products/${product._id}`, 'DELETE');
       setProducts(prev => prev.filter(p => p._id !== product._id));
       setSelectedProduct(null);
-    } catch (err) {
-      alert(err.message);
-    }
+    } catch (err) { alert(err.message); }
   };
 
   const handleSaved = (updated) => {
@@ -88,143 +121,181 @@ const Products = () => {
     setSelectedProduct(updated);
   };
 
+  const handleAdded = (newProduct) => {
+    setProducts(prev => [newProduct, ...prev]);
+    if (newProduct.brand && !brands.includes(newProduct.brand))
+      setBrands(prev => [...prev, newProduct.brand].sort());
+  };
+
+  const clearFilters = () => {
+    setSearch(''); setCategoryFilter('All'); setBrandFilter('All'); setStatusFilter('All');
+  };
+  const hasFilters = search || categoryFilter !== 'All' || brandFilter !== 'All' || statusFilter !== 'All';
+
   return (
     <div className="app-shell">
       <Sidebar />
       <main className="main-content">
+
+        {/* PAGE HEADER */}
         <div className="page-header">
           <div>
-            <p className="label" style={{ marginBottom: 6 }}>PRODUCT CATALOGUE</p>
+            <p className="label" style={{ marginBottom:6 }}>PRODUCT CATALOGUE</p>
             <h1>All Products</h1>
-            <p>{products.length} products · {filtered.length} showing</p>
+            {/* VAULT SWITCHER */}
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:6, flexWrap:'wrap' }}>
+              {vaults.map(v => (
+                <button
+                  key={v._id}
+                  onClick={() => switchVault(v)}
+                  style={{
+                    padding:'4px 12px', borderRadius:20, fontSize:11, cursor:'pointer',
+                    background:    activeVault?._id === v._id ? 'var(--gold)'   : 'var(--deep)',
+                    color:         activeVault?._id === v._id ? 'var(--void)'   : 'var(--text-muted)',
+                    border:       `1px solid ${activeVault?._id === v._id ? 'var(--gold)' : 'var(--border)'}`,
+                    fontWeight:    activeVault?._id === v._id ? 700 : 400,
+                    transition:   'all 0.15s',
+                  }}
+                >
+                  🏠 {v.name}
+                </button>
+              ))}
+              <span style={{ fontSize:12, color:'var(--text-muted)' }}>
+                {products.length} products · {filtered.length} showing
+              </span>
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn-primary" onClick={() => navigate('/scan')}>+ Scan / Add</button>
+          <div style={{ display:'flex', gap:10 }}>
+            <button className="btn-ghost" style={{ fontSize:18, padding:'10px 14px' }}
+              title="Toggle view" onClick={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')}>
+              {viewMode === 'grid' ? '☰' : '⊞'}
+            </button>
+            <button className="btn-primary" onClick={() => setShowAddModal(true)}>+ Add Product</button>
+            <button className="btn-ghost"  onClick={() => navigate('/scan')}>📷 Scan Bill</button>
           </div>
         </div>
 
         {/* FILTER BAR */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input
-            className="input-field" style={{ maxWidth: 260 }}
+        <div style={{ display:'flex', gap:10, marginBottom:20, flexWrap:'wrap', alignItems:'center' }}>
+          <input className="input-field" style={{ maxWidth:240, flex:'1 1 180px' }}
             placeholder="🔍 Search name, brand, notes…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-          <select className="input-field" style={{ maxWidth: 150 }} value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}>
-            <option value="All">All Categories</option>
-            <option value="Electronics">Electronics</option>
-            <option value="Appliance">Appliance</option>
-            <option value="Vehicle">Vehicle</option>
-            <option value="Furniture">Furniture</option>
-            <option value="Other">Other</option>
-          </select>
-          <select className="input-field" style={{ maxWidth: 150 }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="All">All Status</option>
-            <option value="Active">Active</option>
-            <option value="Expiring">Expiring Soon</option>
-            <option value="Expired">Expired</option>
-          </select>
-          <select className="input-field" style={{ maxWidth: 160 }} value={sortBy} onChange={e => setSortBy(e.target.value)}>
+            value={search} onChange={e => setSearch(e.target.value)} />
+
+          {/* Category chips */}
+          <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+            {CATEGORIES.map(cat => (
+              <button key={cat} onClick={() => setCategoryFilter(cat)} style={{
+                padding:'6px 12px', borderRadius:20, fontSize:12, cursor:'pointer',
+                background:  categoryFilter === cat ? 'var(--gold)' : 'var(--deep)',
+                color:       categoryFilter === cat ? 'var(--void)' : 'var(--text-muted)',
+                border:     `1px solid ${categoryFilter === cat ? 'var(--gold)' : 'var(--border)'}`,
+                fontWeight:  categoryFilter === cat ? 700 : 400,
+                transition: 'all 0.15s',
+              }}>
+                {cat !== 'All' && CAT_EMOJI[cat] ? `${CAT_EMOJI[cat]} ` : ''}{cat}
+              </button>
+            ))}
+          </div>
+
+          {/* Brand dropdown */}
+          {brands.length > 0 && (
+            <select className="input-field" style={{ maxWidth:150 }} value={brandFilter} onChange={e => setBrandFilter(e.target.value)}>
+              <option value="All">All Brands</option>
+              {brands.map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
+          )}
+
+          {/* Warranty status toggle */}
+          <div style={{ display:'flex', borderRadius:8, overflow:'hidden', border:'1px solid var(--border)' }}>
+            {['All','Active','Expiring','Expired'].map(s => (
+              <button key={s} onClick={() => setStatusFilter(s)} style={{
+                padding:'7px 12px', fontSize:11, cursor:'pointer', border:'none',
+                background: statusFilter === s ? 'var(--cyan)' : 'var(--deep)',
+                color:      statusFilter === s ? 'var(--void)' : 'var(--text-muted)',
+                fontWeight: statusFilter === s ? 700 : 400,
+                transition: 'all 0.15s',
+              }}>{s}</button>
+            ))}
+          </div>
+
+          {/* Sort */}
+          <select className="input-field" style={{ maxWidth:160 }} value={sortBy} onChange={e => setSortBy(e.target.value)}>
             <option value="newest">Sort: Newest</option>
             <option value="oldest">Sort: Oldest</option>
             <option value="price-high">Sort: Price ↓</option>
             <option value="price-low">Sort: Price ↑</option>
             <option value="name">Sort: Name A–Z</option>
+            <option value="warranty">Sort: Warranty ↑</option>
           </select>
-          {(search || categoryFilter !== 'All' || statusFilter !== 'All') && (
-            <button className="btn-ghost" style={{ fontSize: 12, padding: '8px 12px' }}
-              onClick={() => { setSearch(''); setCategoryFilter('All'); setStatusFilter('All'); }}>
-              Clear Filters ✕
+
+          {hasFilters && (
+            <button className="btn-ghost" style={{ fontSize:12, padding:'8px 12px' }} onClick={clearFilters}>
+              Clear ✕
             </button>
           )}
         </div>
 
-        {/* TABLE */}
-        <div className="card-glint">
-          {filtered.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '60px 0' }}>
-              <div style={{ fontSize: 48, marginBottom: 16 }}>
-                {products.length === 0 ? '📦' : '🔍'}
+        {/* CONTENT */}
+        {loading ? (
+          <div style={{ textAlign:'center', padding:'60px 0', color:'var(--text-muted)' }}>
+            <div style={{ fontSize:32, marginBottom:12 }}>⏳</div>
+            <p>Loading products…</p>
+          </div>
+        ) : !activeVault ? (
+          <div className="card-glint" style={{ textAlign:'center', padding:'60px 0' }}>
+            <div style={{ fontSize:48, marginBottom:16 }}>🏠</div>
+            <h3 style={{ fontFamily:'Syne,sans-serif', marginBottom:8 }}>No vault selected</h3>
+            <p style={{ color:'var(--text-muted)', marginBottom:20 }}>Go to Vault Mgmt to create your first vault.</p>
+            <button className="btn-primary" onClick={() => navigate('/vault')}>Go to Vault Mgmt</button>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="card-glint" style={{ textAlign:'center', padding:'60px 0' }}>
+            <div style={{ fontSize:48, marginBottom:16 }}>{products.length === 0 ? '📦' : '🔍'}</div>
+            <h3 style={{ fontFamily:'Syne,sans-serif', marginBottom:8 }}>
+              {products.length === 0 ? 'No products yet' : 'No results found'}
+            </h3>
+            <p style={{ color:'var(--text-muted)', marginBottom:20 }}>
+              {products.length === 0
+                ? `No products in "${activeVault.name}" yet.`
+                : 'Try adjusting your filters.'}
+            </p>
+            {products.length === 0 && (
+              <div style={{ display:'flex', gap:10, justifyContent:'center' }}>
+                <button className="btn-primary" onClick={() => setShowAddModal(true)}>+ Add Product</button>
+                <button className="btn-ghost"   onClick={() => navigate('/scan')}>📷 Scan Bill</button>
               </div>
-              <h3 style={{ fontFamily: 'Syne,sans-serif', marginBottom: 8 }}>
-                {products.length === 0 ? 'No products yet' : 'No results found'}
-              </h3>
-              <p style={{ color: 'var(--text-muted)', marginBottom: 20 }}>
-                {products.length === 0 ? 'Scan your first bill to get started!' : 'Try changing your search or filters.'}
-              </p>
-              {products.length === 0 && (
-                <button className="btn-primary" onClick={() => navigate('/scan')}>📷 Scan a Bill</button>
-              )}
-            </div>
-          ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>PRODUCT</th>
-                  <th>BRAND</th>
-                  <th>PURCHASE DATE</th>
-                  <th>PRICE</th>
-                  <th>WARRANTY</th>
-                  <th>STATUS</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(p => (
-                  <tr key={p._id} onClick={() => setSelectedProduct(p)} style={{ cursor: 'pointer' }}>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ fontSize: 20 }}>{getCategoryEmoji(p.category)}</span>
-                        <div>
-                          <div style={{ fontWeight: 600 }}>{p.name}</div>
-                          {p.serialNumber && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>SN: {p.serialNumber}</div>}
-                        </div>
-                      </div>
-                    </td>
-                    <td>{p.brand || '—'}</td>
-                    <td>{p.purchaseDate ? new Date(p.purchaseDate).toLocaleDateString() : '—'}</td>
-                    <td>{p.purchasePrice ? `₹${p.purchasePrice.toLocaleString()}` : '—'}</td>
-                    <td>
-                      {p.warrantyExpiry ? (
-                        <div>
-                          <div style={{ fontSize: 12, marginBottom: 4 }}>{new Date(p.warrantyExpiry).toLocaleDateString()}</div>
-                          <div className="progress-bar">
-                            <div className="progress-fill" style={{
-                              width: (() => {
-                                if (!p.purchaseDate || !p.warrantyExpiry) return '0%';
-                                const total = new Date(p.warrantyExpiry) - new Date(p.purchaseDate);
-                                const elapsed = now - new Date(p.purchaseDate);
-                                const pct = Math.min(100, Math.max(0, (elapsed / total) * 100));
-                                return `${100 - pct}%`;
-                              })()
-                            }}></div>
-                          </div>
-                        </div>
-                      ) : '—'}
-                    </td>
-                    <td>{getWarrantyChip(p.warrantyExpiry)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+            )}
+          </div>
+        ) : viewMode === 'grid' ? (
+          <ProductGrid
+            products={filtered}
+            onSelect={setSelectedProduct}
+            getWarrantyStatus={getWarrantyStatus}
+            now={now}
+          />
+        ) : (
+          <ProductTable
+            products={filtered}
+            onSelect={setSelectedProduct}
+            now={now}
+          />
+        )}
 
-        {/* GEO ALERT BANNER */}
-        <GeoAlertBanner products={products} />
+        {/* GEO ALERTS */}
+        {activeVault && (
+          <GeoAlertBanner vaultId={activeVault._id} products={products} />
+        )}
+
       </main>
 
-      {/* Product Detail Drawer */}
       {selectedProduct && (
         <ProductDetailDrawer
           product={selectedProduct}
           onClose={() => setSelectedProduct(null)}
-          onEdit={(p) => { setEditingProduct(p); setSelectedProduct(null); }}
+          onEdit={p => { setEditingProduct(p); setSelectedProduct(null); }}
           onDelete={handleDelete}
         />
       )}
-
-      {/* Edit Modal */}
       {editingProduct && (
         <EditProductModal
           product={editingProduct}
@@ -232,118 +303,106 @@ const Products = () => {
           onSaved={handleSaved}
         />
       )}
+      {showAddModal && activeVault && (
+        <AddProductModal
+          vaultId={activeVault._id}
+          onClose={() => setShowAddModal(false)}
+          onAdded={handleAdded}
+        />
+      )}
     </div>
   );
 };
 
-// ── Geo Alert Banner (Member 3 feature) ───────────────────────────
-const GeoAlertBanner = ({ products }) => {
-  const [location, setLocation] = useState(null);
-  const [geoError, setGeoError] = useState('');
-  const [nearbyAlerts, setNearbyAlerts] = useState([]);
-
-  // Static seed data for service centers (top brands)
-  const SERVICE_CENTERS = [
-    { brand: 'Samsung', name: 'Samsung Service Center - Anna Nagar', lat: 13.085, lng: 80.210 },
-    { brand: 'Samsung', name: 'Samsung Service Center - T Nagar', lat: 13.040, lng: 80.233 },
-    { brand: 'Apple', name: 'Apple Authorized Service - Nungambakkam', lat: 13.060, lng: 80.242 },
-    { brand: 'LG', name: 'LG Service Center - Adyar', lat: 13.000, lng: 80.254 },
-    { brand: 'Sony', name: 'Sony Service Center - Velachery', lat: 12.979, lng: 80.220 },
-    { brand: 'Bosch', name: 'Bosch Service - Guindy', lat: 13.011, lng: 80.212 },
-    { brand: 'Whirlpool', name: 'Whirlpool Service - Porur', lat: 13.037, lng: 80.158 },
-  ];
-
-  const haversineKm = (lat1, lng1, lat2, lng2) => {
-    const R = 6371;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLng = (lng2 - lng1) * Math.PI / 180;
-    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  };
-
-  const requestLocation = () => {
-    if (!navigator.geolocation) { setGeoError('Geolocation not supported by your browser.'); return; }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const { latitude, longitude } = pos.coords;
-        setLocation({ lat: latitude, lng: longitude });
-
-        // Find expiring products within 30 days
-        const now = new Date();
-        const expiringBrands = products
-          .filter(p => p.warrantyExpiry && p.brand)
-          .filter(p => {
-            const days = Math.floor((new Date(p.warrantyExpiry) - now) / (1000 * 60 * 60 * 24));
-            return days >= 0 && days <= 30;
-          })
-          .map(p => p.brand.toLowerCase());
-
-        // Find nearby matching service centers (within 5 km)
-        const alerts = SERVICE_CENTERS
-          .filter(sc => expiringBrands.some(b => sc.brand.toLowerCase().includes(b) || b.includes(sc.brand.toLowerCase())))
-          .map(sc => ({ ...sc, distance: haversineKm(latitude, longitude, sc.lat, sc.lng).toFixed(1) }))
-          .filter(sc => sc.distance <= 5)
-          .sort((a, b) => a.distance - b.distance);
-
-        setNearbyAlerts(alerts);
-      },
-      (err) => setGeoError('Location access denied. Enable to see nearby service alerts.')
-    );
-  };
-
-  if (!location && !geoError) {
-    return (
-      <div className="card" style={{ marginTop: 16, borderColor: 'var(--cyan)', background: 'var(--cyan-dim)', display: 'flex', alignItems: 'center', gap: 14 }}>
-        <span style={{ fontSize: 22 }}>📍</span>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--cyan)', marginBottom: 2 }}>Geo-Aware Service Alerts</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Allow location to find service centers near you with expiring warranties</div>
-        </div>
-        <button className="btn-ghost" style={{ fontSize: 12, padding: '8px 14px', borderColor: 'var(--cyan)', color: 'var(--cyan)' }} onClick={requestLocation}>
-          Enable
-        </button>
-      </div>
-    );
-  }
-
-  if (geoError) {
-    return (
-      <div className="card" style={{ marginTop: 16, borderColor: 'rgba(245,75,75,0.3)', background: 'rgba(245,75,75,0.04)', fontSize: 12, color: 'var(--text-muted)' }}>
-        📍 {geoError}
-      </div>
-    );
-  }
-
-  if (nearbyAlerts.length === 0) {
-    return (
-      <div className="card" style={{ marginTop: 16, fontSize: 12, color: 'var(--text-muted)' }}>
-        ✅ No nearby service centers matching your expiring warranties found within 5 km.
-      </div>
-    );
-  }
-
-  return (
-    <div className="card-glint" style={{ marginTop: 16, borderColor: 'rgba(75,232,216,0.3)' }}>
-      <p className="label" style={{ marginBottom: 12 }}>📍 GEO-AWARE ALERTS — NEAR YOU</p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {nearbyAlerts.map((sc, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: 'var(--deep)', borderRadius: 8, borderLeft: '3px solid var(--cyan)' }}>
-            <span>📍</span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{sc.name}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sc.distance} km away · {sc.brand} warranty expiring soon</div>
-            </div>
-            <a
-              href={`https://www.google.com/maps/search/${encodeURIComponent(sc.name)}`}
-              target="_blank" rel="noopener noreferrer"
-              className="btn-ghost" style={{ fontSize: 10, padding: '5px 10px' }}>
-              Navigate →
-            </a>
+/* ── Grid View ─────────────────────────────────────────────────── */
+const ProductGrid = ({ products, onSelect, getWarrantyStatus, now }) => (
+  <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))', gap:16, marginBottom:24 }}>
+    {products.map(p => {
+      const status = getWarrantyStatus(p.warrantyExpiry);
+      const borderAccent = status === 'expired' ? 'rgba(245,75,75,0.4)' : status === 'expiring' ? 'rgba(245,160,75,0.4)' : undefined;
+      return (
+        <div key={p._id} className="card" onClick={() => onSelect(p)}
+          style={{ cursor:'pointer', transition:'transform 0.15s, border-color 0.15s', borderColor:borderAccent }}
+          onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; if (!borderAccent) e.currentTarget.style.borderColor = 'var(--cyan)'; }}
+          onMouseLeave={e => { e.currentTarget.style.transform = ''; if (!borderAccent) e.currentTarget.style.borderColor = ''; }}>
+          <div style={{ fontSize:40, textAlign:'center', marginBottom:12, background:'var(--deep)', borderRadius:12, padding:'14px 0' }}>
+            {CAT_EMOJI[p.category] || '📦'}
           </div>
+          <div style={{ marginBottom:8 }}>
+            <div style={{ fontFamily:'Syne,sans-serif', fontWeight:700, fontSize:15, marginBottom:3, lineHeight:1.3 }}>{p.name}</div>
+            <div style={{ fontSize:12, color:'var(--text-muted)' }}>{p.brand || 'Unknown brand'} · {p.category}</div>
+          </div>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+            <span style={{ fontSize:13, fontWeight:600, color:'var(--gold)' }}>
+              {p.purchasePrice ? `₹${p.purchasePrice.toLocaleString()}` : '—'}
+            </span>
+            <WarrantyChip warrantyExpiry={p.warrantyExpiry} />
+          </div>
+          {p.purchaseDate && (
+            <div style={{ fontSize:11, color:'var(--text-muted)' }}>
+              Purchased {new Date(p.purchaseDate).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' })}
+            </div>
+          )}
+          {p.warrantyExpiry && p.purchaseDate && (() => {
+            const total = new Date(p.warrantyExpiry) - new Date(p.purchaseDate);
+            const pct   = Math.min(100, Math.max(0, ((now - new Date(p.purchaseDate)) / total) * 100));
+            return (
+              <div className="progress-bar" style={{ marginTop:10 }}>
+                <div className="progress-fill" style={{
+                  width:`${100 - pct}%`,
+                  background: status === 'expired' ? 'var(--danger)' : status === 'expiring' ? 'var(--warn)' : undefined,
+                }} />
+              </div>
+            );
+          })()}
+        </div>
+      );
+    })}
+  </div>
+);
+
+/* ── List / Table View ─────────────────────────────────────────── */
+const ProductTable = ({ products, onSelect, now }) => (
+  <div className="card-glint" style={{ marginBottom:24 }}>
+    <table className="data-table">
+      <thead>
+        <tr>
+          <th>PRODUCT</th><th>BRAND</th><th>PURCHASE DATE</th><th>PRICE</th><th>WARRANTY</th><th>STATUS</th>
+        </tr>
+      </thead>
+      <tbody>
+        {products.map(p => (
+          <tr key={p._id} onClick={() => onSelect(p)} style={{ cursor:'pointer' }}>
+            <td>
+              <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                <span style={{ fontSize:20 }}>{CAT_EMOJI[p.category] || '📦'}</span>
+                <div>
+                  <div style={{ fontWeight:600 }}>{p.name}</div>
+                  {p.serialNumber && <div style={{ fontSize:10, color:'var(--text-muted)' }}>SN: {p.serialNumber}</div>}
+                </div>
+              </div>
+            </td>
+            <td>{p.brand || '—'}</td>
+            <td>{p.purchaseDate ? new Date(p.purchaseDate).toLocaleDateString('en-IN') : '—'}</td>
+            <td>{p.purchasePrice ? `₹${p.purchasePrice.toLocaleString()}` : '—'}</td>
+            <td>
+              {p.warrantyExpiry && p.purchaseDate ? (() => {
+                const total = new Date(p.warrantyExpiry) - new Date(p.purchaseDate);
+                const pct   = Math.min(100, Math.max(0, ((now - new Date(p.purchaseDate)) / total) * 100));
+                return (
+                  <div>
+                    <div style={{ fontSize:12, marginBottom:4 }}>{new Date(p.warrantyExpiry).toLocaleDateString('en-IN')}</div>
+                    <div className="progress-bar"><div className="progress-fill" style={{ width:`${100 - pct}%` }} /></div>
+                  </div>
+                );
+              })() : (p.warrantyExpiry ? new Date(p.warrantyExpiry).toLocaleDateString('en-IN') : '—')}
+            </td>
+            <td><WarrantyChip warrantyExpiry={p.warrantyExpiry} /></td>
+          </tr>
         ))}
-      </div>
-    </div>
-  );
-};
+      </tbody>
+    </table>
+  </div>
+);
 
 export default Products;
