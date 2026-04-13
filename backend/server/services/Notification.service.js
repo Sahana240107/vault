@@ -1,33 +1,46 @@
 /**
- * server/services/notification.service.js
+ * server/services/Notification.service.js
  *
  * Email-only notification dispatcher using Nodemailer.
- *
- * Install: npm install nodemailer
  *
  * Required .env variables:
  *   SMTP_HOST=smtp.gmail.com
  *   SMTP_PORT=587
- *   SMTP_USER=youremail@gmail.com
- *   SMTP_PASS=your_16char_app_password
+ *   SMTP_USER=vaultofficial67@gmail.com
+ *   SMTP_PASS=duzcwqskeywgwhak        ← 16-char Gmail App Password
  *   FRONTEND_URL=http://localhost:5173
  */
 
 const nodemailer = require('nodemailer');
 
-// ─── Transporter (lazy-init) ──────────────────────────────────────────────────
+// ─── Transporter (lazy-init with verification) ────────────────────────────────
 let _transporter = null;
-const getTransporter = () => {
+
+const getTransporter = async () => {
   if (!_transporter) {
     _transporter = nodemailer.createTransport({
       host:   process.env.SMTP_HOST || 'smtp.gmail.com',
       port:   parseInt(process.env.SMTP_PORT || '587'),
-      secure: false,
+      secure: false,            // STARTTLS on port 587
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
       },
+      // Prevents "self-signed cert" errors on some hosts
+      tls: {
+        rejectUnauthorized: false,
+      },
     });
+
+    // Verify SMTP connection on first use so errors surface early
+    try {
+      await _transporter.verify();
+      console.log('[notify] SMTP connection verified ✓');
+    } catch (err) {
+      console.error('[notify] SMTP verification failed:', err.message);
+      _transporter = null; // reset so next call retries
+      throw err;
+    }
   }
   return _transporter;
 };
@@ -77,9 +90,37 @@ const buildEmailHtml = (productName, expiryDate, daysLeft) => `
 </body>
 </html>`;
 
+// ─── Test Email Template ──────────────────────────────────────────────────────
+const buildTestEmailHtml = () => `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <style>
+    body { font-family: Arial, sans-serif; background: #0d0d0d; color: #f0f0f0; margin:0; padding:0; }
+    .container { max-width: 560px; margin: 40px auto; background: #1a1a1a;
+                 border-radius: 12px; overflow: hidden; border: 1px solid #2a2a2a; }
+    .header { background: #4caf50; padding: 24px 32px; }
+    .header h1 { margin:0; color:#fff; font-size:22px; }
+    .body { padding: 28px 32px; color: #bbb; font-size: 15px; line-height: 1.7; }
+    .footer { padding:16px 32px; font-size:11px; color:#555; border-top:1px solid #2a2a2a; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header"><h1>✅ VaultMERN — Email Connected!</h1></div>
+    <div class="body">
+      <p>Your email notifications are working correctly.</p>
+      <p>You'll receive warranty expiry alerts at this address based on your notification preferences.</p>
+    </div>
+    <div class="footer">Sent from VaultMERN at ${new Date().toLocaleString()}</div>
+  </div>
+</body>
+</html>`;
+
 // ─── Send Email ───────────────────────────────────────────────────────────────
 const sendEmail = async ({ to, productName, warrantyExpiry, daysLeft }) => {
-  const transporter = getTransporter();
+  const transporter = await getTransporter();
   await transporter.sendMail({
     from:    `"VaultMERN" <${process.env.SMTP_USER}>`,
     to,
@@ -87,6 +128,18 @@ const sendEmail = async ({ to, productName, warrantyExpiry, daysLeft }) => {
     html:    buildEmailHtml(productName, warrantyExpiry, daysLeft),
   });
   console.log(`[notify] Email sent to ${to} for "${productName}"`);
+};
+
+// ─── Send Test Email ──────────────────────────────────────────────────────────
+const sendTestEmail = async (to) => {
+  const transporter = await getTransporter();
+  await transporter.sendMail({
+    from:    `"VaultMERN" <${process.env.SMTP_USER}>`,
+    to,
+    subject: '✅ VaultMERN — Email notifications are working!',
+    html:    buildTestEmailHtml(),
+  });
+  console.log(`[notify] Test email sent to ${to}`);
 };
 
 // ─── Master dispatcher ────────────────────────────────────────────────────────
@@ -109,4 +162,4 @@ const dispatchWarrantyAlert = async (user, product, daysLeft) => {
   return sent;
 };
 
-module.exports = { sendEmail, dispatchWarrantyAlert };
+module.exports = { sendEmail, sendTestEmail, dispatchWarrantyAlert };

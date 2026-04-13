@@ -12,9 +12,12 @@ const Sidebar = () => {
     { path: '/dashboard', icon: '📊', label: 'Dashboard', section: 'MAIN' },
     { path: '/products',  icon: '📦', label: 'Products' },
     { path: '/scan',      icon: '📷', label: 'Scan Bill' },
+    { path: '/bills',              icon: '🗂️',  label: 'Bills & Warranty' },
+    { path: '/notifications',      icon: '🔔',  label: 'Notifications'    },
     { path: '/vault',     icon: '🗄️', label: 'Vault Mgmt', section: 'VAULT' },
     { path: '/analytics', icon: '✨', label: 'Analytics' },
     { path: '/profile',   icon: '👤', label: 'Profile', section: 'ACCOUNT' },
+    { path: '/notification-prefs', icon: '⚙️',  label: 'Alert Settings'   },
   ];
 
   return (

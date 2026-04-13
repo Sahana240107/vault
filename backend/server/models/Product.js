@@ -8,15 +8,13 @@ const productSchema = new mongoose.Schema({
     enum: ['Electronics', 'Appliance', 'Vehicle', 'Furniture', 'Other'],
     default: 'Other',
   },
-  purchaseDate:   { type: Date },
-  purchasePrice:  { type: Number },
-  warrantyExpiry: { type: Date },   // ← filled from bill OCR or warranty card OCR
-  warrantyCardUrl:{ type: String }, // ← Cloudinary URL of separate warranty card image
-
-  billImageUrl:   { type: String }, // ← Cloudinary URL (image bill)
-  billPdfUrl:     { type: String }, // ← Cloudinary URL (PDF bill)
-
-  serialNumber:   { type: String },
+  purchaseDate:   { type: Date,   default: null },
+  purchasePrice:  { type: Number, default: null },
+  warrantyExpiry: { type: Date,   default: null },   // filled from bill OCR or warranty card OCR
+  warrantyCardUrl:{ type: String, default: null },   // Cloudinary URL of separate warranty card image
+  serialNumber:   { type: String, default: null },
+  billImageUrl:   { type: String, default: null },   // Cloudinary URL (image bill)
+  billPdfUrl:     { type: String, default: null },   // Cloudinary URL (PDF bill)
   notes:          { type: String },
   tags:           [{ type: String }],
 
@@ -27,5 +25,8 @@ const productSchema = new mongoose.Schema({
   resaleEstimate: { type: Number },
   carbonScore:    { type: Number },
 }, { timestamps: true });
+
+// Full-text search index across key fields
+productSchema.index({ name: 'text', brand: 'text', notes: 'text' });
 
 module.exports = mongoose.model('Product', productSchema);
