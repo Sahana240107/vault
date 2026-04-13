@@ -10,10 +10,10 @@ const vaultRoutes          = require('./server/routes/vault.routes');
 const productRoutes        = require('./server/routes/product.routes');
 const serviceHistoryRoutes = require('./server/routes/serviceHistory.routes');
 const uploadRoutes         = require('./server/routes/upload.routes');
-const notificationRoutes   = require('./server/routes/Notification.routes');
-const geoRoutes            = require('./server/routes/geo.routes');
+const notificationRoutes       = require('./server/routes/Notification.routes');
+const geoRoutes                = require('./server/routes/geo.routes');
+const startWarrantyCron        = require('./server/jobs/warrantyExpiry.job');
 const { startWarrantyChecker } = require('./server/jobs/warrantyChecker.job');
-const { startWarrantyChecker } = require('./jobs/warrantyChecker.job');
 const app    = express();
 const server = http.createServer(app);
 
