@@ -1,101 +1,139 @@
 /**
  * server/jobs/warrantyChecker.job.js
  *
- * Runs daily at 9 AM. Finds products whose warranty expires in
- * exactly N days (per each user's notificationPrefs.daysBefore),
- * creates a Notification doc, and dispatches the email.
+ * THE only warranty cron job — replaces both warrantyExpiry.job.js AND the old
+ * warrantyChecker.job.js (which had a bug: looked up products by `owner` field
+ * instead of VaultMember, so it missed most products).
  *
- * Usage in server.js / app.js (after DB connects):
+ * What it does every day at 08:00 AM IST:
+ *   1. Finds products whose warrantyExpiry falls exactly N days from today,
+ *      where N comes from each vault-member user's notificationPrefs.daysBefore.
+ *   2. Creates an in-app Notification document (deduped per user/product/day).
+ *   3. Emits a Socket.IO event to the user's personal room so the Notifications
+ *      page updates in real-time without a page refresh.
+ *   4. Fires the email via Notification.service.js (respects user toggles).
+ *
+ * Usage in server.js (call ONCE after DB connects):
  *   const { startWarrantyChecker } = require('./jobs/warrantyChecker.job');
- *   startWarrantyChecker();
+ *   startWarrantyChecker(io);   // pass the Socket.IO server instance
  *
- * To test immediately without waiting for 9 AM, also export runWarrantyCheck:
+ * To trigger immediately for testing (e.g. from a route):
  *   const { runWarrantyCheck } = require('./jobs/warrantyChecker.job');
- *   runWarrantyCheck();
+ *   await runWarrantyCheck(io);
  */
 
-const cron             = require('node-cron');
-const Product          = require('../models/Product');
-const User             = require('../models/User');
-const Notification     = require('../models/Notification');
+const cron                      = require('node-cron');
+const Product                   = require('../models/Product');
+const User                      = require('../models/User');
+const VaultMember               = require('../models/VaultMember');
+const Notification              = require('../models/Notification');
 const { dispatchWarrantyAlert } = require('../services/Notification.service');
 
+// Default alert windows if a user hasn't configured custom ones
+const DEFAULT_DAYS_BEFORE = [7, 30];
+
 // ─── Core logic ───────────────────────────────────────────────────────────────
-const runWarrantyCheck = async () => {
-  console.log('[warrantyChecker] Running warranty check...');
+const runWarrantyCheck = async (io) => {
+  console.log('[warrantyChecker] ▶ Running warranty check…');
+  const now = new Date();
 
   try {
-    // Fetch all users that have at least one daysBefore value configured
-    const users = await User.find({
-      'notificationPrefs.daysBefore': { $exists: true, $not: { $size: 0 } },
-    });
+    // Collect all unique daysBefore values across all users
+    const allUsers      = await User.find({}, 'notificationPrefs email name');
+    const allDaysValues = new Set(DEFAULT_DAYS_BEFORE);
+    for (const u of allUsers) {
+      const days = u.notificationPrefs?.daysBefore;
+      if (Array.isArray(days) && days.length) days.forEach(d => allDaysValues.add(d));
+    }
 
-    console.log(`[warrantyChecker] Checking ${users.length} user(s)...`);
+    let totalNotified = 0;
 
-    for (const user of users) {
-      const daysBefore = user.notificationPrefs?.daysBefore || [30, 7, 1];
+    for (const offsetDays of allDaysValues) {
+      // Build the full-day window for the target date
+      const target = new Date(now);
+      target.setDate(now.getDate() + offsetDays);
+      const dayStart = new Date(target); dayStart.setHours(0,  0,  0,   0);
+      const dayEnd   = new Date(target); dayEnd.setHours(23, 59, 59, 999);
 
-      for (const daysLeft of daysBefore) {
-        // Build a full-day window for the target expiry date
-        const now        = new Date();
-        const target     = new Date(now);
-        target.setDate(target.getDate() + daysLeft);
+      // Find all products expiring on that exact day
+      const products = await Product.find({
+        warrantyExpiry: { $gte: dayStart, $lte: dayEnd },
+      });
 
-        const startOfDay = new Date(target);
-        startOfDay.setHours(0, 0, 0, 0);
+      if (!products.length) continue;
 
-        const endOfDay = new Date(target);
-        endOfDay.setHours(23, 59, 59, 999);
+      for (const product of products) {
+        // Find all vault members who have access to this product's vault
+        const members = await VaultMember.find({ vaultId: product.vaultId });
 
-        // Find this user's products expiring on that exact day
-        const products = await Product.find({
-          owner:          user._id,
-          warrantyExpiry: { $gte: startOfDay, $lte: endOfDay },
-        });
+        for (const member of members) {
+          const user = allUsers.find(u => String(u._id) === String(member.userId));
+          if (!user) continue;
 
-        for (const product of products) {
-          // Deduplicate: skip if we already sent a notification today for this product
-          const alreadySent = await Notification.findOne({
-            userId:    user._id,
+          // Check this offset is in the user's personal daysBefore list
+          const userDays = (Array.isArray(user.notificationPrefs?.daysBefore) && user.notificationPrefs.daysBefore.length)
+            ? user.notificationPrefs.daysBefore
+            : DEFAULT_DAYS_BEFORE;
+          if (!userDays.includes(offsetDays)) continue;
+
+          // ── Deduplicate: one notification per user/product/daysLeft per day ──
+          const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+          const already = await Notification.findOne({
+            userId:    member.userId,
             productId: product._id,
             type:      'warranty_expiring',
-            createdAt: { $gte: startOfDay, $lte: endOfDay },
+            createdAt: { $gte: todayStart },
           });
-
-          if (alreadySent) {
-            console.log(`[warrantyChecker] Already notified user ${user._id} for "${product.name}" (${daysLeft}d) — skipping`);
+          if (already) {
+            console.log(`[warrantyChecker] Already notified user ${member.userId} for "${product.name}" (${offsetDays}d) — skip`);
             continue;
           }
 
-          // Create in-app notification record
-          await Notification.create({
-            userId:    user._id,
+          // ── Send email + get channel audit ────────────────────────────────
+          const sent = await dispatchWarrantyAlert(user, product, offsetDays);
+
+          // ── Create in-app notification ────────────────────────────────────
+          const notification = await Notification.create({
+            userId:    member.userId,
             productId: product._id,
             type:      'warranty_expiring',
-            message:   `"${product.name}" warranty expires in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}.`,
-            channels:  { email: true },
+            message:   `"${product.name}" warranty expires in ${offsetDays} day${offsetDays !== 1 ? 's' : ''} (${new Date(product.warrantyExpiry).toDateString()}).`,
+            isRead:    false,
+            channels:  sent,
           });
 
-          // Fire the email
-          const sent = await dispatchWarrantyAlert(user, product, daysLeft);
-          console.log(`[warrantyChecker] Dispatched for "${product.name}" → email:${sent.email}`);
+          // ── Real-time Socket.IO push to the user's personal room ──────────
+          if (io) {
+            // Populate productId for the frontend
+            const populated = await Notification.findById(notification._id)
+              .populate('productId', 'name brand category warrantyExpiry');
+
+            io.to(`user:${String(member.userId)}`).emit('new-notification', populated);
+            console.log(`[warrantyChecker] 🔔 Socket push → room user:${member.userId}`);
+          }
+
+          totalNotified++;
+          console.log(
+            `[warrantyChecker] Notified user ${member.userId} for "${product.name}" ` +
+            `(${offsetDays}d) | email:${sent.email}`
+          );
         }
       }
     }
 
-    console.log('[warrantyChecker] Done ✓');
+    console.log(`[warrantyChecker] ✓ Done — ${totalNotified} notification(s) created.`);
   } catch (err) {
     console.error('[warrantyChecker] Fatal error:', err.message);
   }
 };
 
 // ─── Scheduler ────────────────────────────────────────────────────────────────
-const startWarrantyChecker = () => {
-  // Runs every day at 9:00 AM server time
-  cron.schedule('0 9 * * *', runWarrantyCheck, {
-    timezone: 'Asia/Kolkata', // ← change to your server timezone if needed
+const startWarrantyChecker = (io) => {
+  // Run every day at 08:00 AM IST
+  cron.schedule('0 8 * * *', () => runWarrantyCheck(io), {
+    timezone: 'Asia/Kolkata',
   });
-  console.log('[warrantyChecker] Scheduled: daily at 09:00 AM IST');
+  console.log('[warrantyChecker] Scheduled: daily at 08:00 AM IST');
 };
 
 module.exports = { startWarrantyChecker, runWarrantyCheck };
