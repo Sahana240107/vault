@@ -4,6 +4,7 @@ import { useAuth } from './AuthContext';
 import { io } from 'socket.io-client';
 
 const VaultContext = createContext();
+const SOCKET_URL = import.meta.env.VITE_API_URL?.replace(/\/$/, '');
 
 export const VaultProvider = ({ children }) => {
   const { user } = useAuth();
@@ -21,7 +22,7 @@ export const VaultProvider = ({ children }) => {
     }
     loadVaults();
 
-    socketRef.current = io('http://localhost:5000');
+    socketRef.current = io(SOCKET_URL);
 
     // Existing vault-updated event (product changes etc.)
     socketRef.current.on('vault-updated', () => loadVaults());
