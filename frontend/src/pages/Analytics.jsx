@@ -52,9 +52,12 @@ const Donut = ({ pct, color, size = 56, stroke = 6 }) => {
 };
 
 const Analytics = () => {
-  const [products, setProducts] = useState([]);
-  const [vault,    setVault]    = useState(null);
-  const [mapState,      setMapState]      = useState('idle');
+  const [products,         setProducts]         = useState([]);
+  const [vault,            setVault]            = useState(null);
+  const [vaults,           setVaults]           = useState([]);
+  const [selectedVaultId,  setSelectedVaultId]  = useState('');
+  const [vaultSwitching,   setVaultSwitching]   = useState(false);
+  const [mapState,         setMapState]         = useState('idle');
   const [geoAlerts,     setGeoAlerts]     = useState([]);
   const [userCoords,    setUserCoords]    = useState(null);
   const [geoError,      setGeoError]      = useState('');
@@ -68,18 +71,44 @@ const Analytics = () => {
   const markersRef = useRef([]);
   const socketRef  = useRef(null);
 
-  const loadProducts = useCallback(async () => {
+  const loadProducts = useCallback(async (vaultIdOverride) => {
     try {
-      const vaults = await api('/vaults/my');
-      if (vaults.length > 0) {
-        setVault(vaults[0]);
-        const prods = await api(`/products?vaultId=${vaults[0]._id}`);
+      const allVaults = await api('/vaults/my');
+      setVaults(allVaults);
+      if (allVaults.length > 0) {
+        const savedId  = vaultIdOverride || localStorage.getItem('activeVaultId');
+        const found    = allVaults.find(v => v._id === savedId);
+        const chosen   = found || allVaults[0];
+        setVault(chosen);
+        setSelectedVaultId(chosen._id);
+        const prods = await api(`/products?vaultId=${chosen._id}`);
         setProducts(prods);
-        return { vault: vaults[0], products: prods };
+        return { vault: chosen, products: prods };
       }
     } catch (err) { console.error(err); }
     return null;
   }, []);
+
+  /* Switch to a different vault */
+  const handleVaultSwitch = useCallback(async (v) => {
+    if (vaultSwitching || v._id === selectedVaultId) return;
+    setVaultSwitching(true);
+    try {
+      setSelectedVaultId(v._id);
+      setVault(v);
+      const prods = await api(`/products?vaultId=${v._id}`);
+      setProducts(prods);
+      // Reset map so geo re-computes for this vault's products
+      if (mapState === 'ready' && userCoords) {
+        const data   = await api(`/geo/nearby?vaultId=${v._id}&lat=${userCoords.lat}&lng=${userCoords.lng}&radiusKm=50`).catch(() => ({ alerts:[] }));
+        const alerts = data.alerts || [];
+        setGeoAlerts(alerts);
+        await buildMapMarkers(userCoords.lat, userCoords.lng, alerts, prods);
+        setLastRefresh(new Date());
+      }
+    } catch (err) { console.error(err); }
+    finally { setVaultSwitching(false); }
+  }, [vaultSwitching, selectedVaultId, mapState]);
 
   useEffect(() => { loadProducts(); }, [loadProducts]);
 
@@ -306,6 +335,33 @@ const Analytics = () => {
             <p className="label" style={{ marginBottom:6 }}>ANALYTICS &amp; INTELLIGENCE</p>
             <h1>Insights</h1>
             <p>Vault Health · Spend · Geo Map · Warranty Status</p>
+
+            {/* Vault selector pills */}
+            {vaults.length > 1 && (
+              <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginTop:14 }}>
+                {vaults.map(v => (
+                  <button key={v._id} onClick={() => handleVaultSwitch(v)} disabled={vaultSwitching}
+                    style={{
+                      padding:'6px 16px', borderRadius:20, fontSize:12, fontWeight:600, cursor:'pointer',
+                      border:`1.5px solid ${selectedVaultId === v._id ? 'var(--gold)' : 'var(--border)'}`,
+                      background: selectedVaultId === v._id ? 'rgba(232,184,75,0.14)' : 'rgba(255,255,255,0.03)',
+                      color: selectedVaultId === v._id ? 'var(--gold)' : 'var(--text-muted)',
+                      transition:'all 0.18s', opacity: vaultSwitching ? 0.6 : 1,
+                    }}>
+                    {selectedVaultId === v._id ? '🔒 ' : ''}{v.name}
+                  </button>
+                ))}
+                {vaultSwitching && <span style={{ fontSize:11, color:'var(--text-muted)', alignSelf:'center' }}>Loading…</span>}
+              </div>
+            )}
+            {vaults.length === 1 && (
+              <div style={{ marginTop:10 }}>
+                <span style={{ fontSize:11, fontWeight:600, padding:'4px 12px', borderRadius:10,
+                  background:'rgba(232,184,75,0.1)', color:'var(--gold)', border:'1px solid rgba(232,184,75,0.25)' }}>
+                  🔒 {vault?.name}
+                </span>
+              </div>
+            )}
           </div>
           <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
             {expiring7 > 0 && (
